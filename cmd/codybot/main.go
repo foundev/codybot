@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -22,7 +23,7 @@ import (
 
 const (
 	defaultBaseURL = "http://localhost:11434/v1"
-	defaultModel   = "llama3"
+	defaultModel   = "qwen3-coder"
 )
 
 type appState int
@@ -83,6 +84,7 @@ type model struct {
 	streaming       bool
 	streamCh        chan streamMsg
 	currentResponse strings.Builder
+	currentResponseMutex * sync.Mutex
 	lastErr         error
 
 	width  int
@@ -144,7 +146,7 @@ func newModel(cfg config, agentContent string, state appState) model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-
+	var mutex sync.Mutex 
 	m := model{
 		state:        state,
 		cfg:          cfg,
@@ -152,6 +154,8 @@ func newModel(cfg config, agentContent string, state appState) model {
 		input:        ta,
 		viewport:     viewport.New(0, 0),
 		spinner:      spin,
+		currentResponse: strings.Builder{},
+		currentResponseMutex: &mutex,
 	}
 	m.system = message{
 		Role:    "system",
@@ -240,7 +244,9 @@ func (m *model) updateChatKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, tea.Quit
 	case "ctrl+l":
 		m.transcript = ""
+		m.currentResponseMutex.Lock()
 		m.currentResponse.Reset()
+		m.currentResponseMutex.Unlock()
 		m.history = []message{m.system}
 		m.viewport.SetContent(m.transcript)
 		return true, nil
@@ -257,7 +263,9 @@ func (m *model) updateChatKeys(msg tea.KeyMsg) (bool, tea.Cmd) {
 		m.history = append(m.history, message{Role: "user", Content: text})
 		m.streaming = true
 		m.lastErr = nil
+		m.currentResponseMutex.Lock()
 		m.currentResponse.Reset()
+		m.currentResponseMutex.Unlock()
 		m.streamCh = make(chan streamMsg)
 		go streamCompletion(context.Background(), m.cfg, m.history, m.streamCh)
 		return true, tea.Batch(waitStream(m.streamCh), m.spinner.Tick)
@@ -276,15 +284,19 @@ func (m model) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 	if msg.done {
 		m.streaming = false
 		m.appendTranscript("\n\n")
+		m.currentResponseMutex.Lock()
 		if response := m.currentResponse.String(); strings.TrimSpace(response) != "" {
 			m.history = append(m.history, message{Role: "assistant", Content: response})
 		}
+		m.currentResponseMutex.Unlock()
 		return m, nil
 	}
 
 	if msg.token != "" {
 		m.appendTranscript(msg.token)
+		m.currentResponseMutex.Lock()
 		m.currentResponse.WriteString(msg.token)
+		m.currentResponseMutex.Unlock()
 	}
 
 	if m.streaming {
@@ -353,9 +365,7 @@ func (m model) applySize(width, height int) model {
 	statusHeight := 1
 	inputHeight := m.input.Height() + 2
 	available := height - headerHeight - statusHeight - inputHeight - 2
-	if available < 5 {
-		available = 5
-	}
+	available = max(available, 5)
 	m.viewport = viewport.New(contentWidth, available)
 	m.viewport.SetContent(m.transcript)
 	m.viewport.GotoBottom()
@@ -482,13 +492,6 @@ func fileExists(path string) bool {
 
 func errorsIsEOF(err error) bool {
 	return err == io.EOF || strings.Contains(err.Error(), "closed network connection")
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 var (
