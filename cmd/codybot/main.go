@@ -50,6 +50,29 @@ type chatCompletionRequest struct {
 	Messages    []message `json:"messages"`
 	Stream      bool      `json:"stream"`
 	Temperature float64   `json:"temperature,omitempty"`
+	Tools       []Tool    `json:"tools,omitempty"`
+}
+
+type Tool struct {
+	Type     string              `json:"type"`
+	Function *FunctionDefinition `json:"function"`
+}
+
+type FunctionDefinition struct {
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Parameters  *FunctionParameters `json:"parameters"`
+}
+
+type FunctionParameters struct {
+	Type       string                      `json:"type"`
+	Properties map[string]FunctionProperty `json:"properties"`
+	Required   []string                    `json:"required"`
+}
+
+type FunctionProperty struct {
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
 }
 
 type streamResponse struct {
@@ -81,11 +104,11 @@ type model struct {
 	spinner    spinner.Model
 	transcript string
 
-	streaming       bool
-	streamCh        chan streamMsg
-	currentResponse strings.Builder
-	currentResponseMutex * sync.Mutex
-	lastErr         error
+	streaming            bool
+	streamCh             chan streamMsg
+	currentResponse      *strings.Builder
+	currentResponseMutex *sync.Mutex
+	lastErr              error
 
 	width  int
 	height int
@@ -146,15 +169,15 @@ func newModel(cfg config, agentContent string, state appState) model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
 	spin.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-	var mutex sync.Mutex 
+	var mutex sync.Mutex
 	m := model{
-		state:        state,
-		cfg:          cfg,
-		agentContent: agentContent,
-		input:        ta,
-		viewport:     viewport.New(0, 0),
-		spinner:      spin,
-		currentResponse: strings.Builder{},
+		state:                state,
+		cfg:                  cfg,
+		agentContent:         agentContent,
+		input:                ta,
+		viewport:             viewport.New(0, 0),
+		spinner:              spin,
+		currentResponse:      &strings.Builder{},
 		currentResponseMutex: &mutex,
 	}
 	m.system = message{
@@ -471,18 +494,18 @@ func writeAgentsTemplate(path string) error {
 func defaultAgentsTemplate() string {
 	return `# agents.md
 
-## Mission
-You are Codybot, a CLI coding agent. Keep responses concise and practical.
+	## Mission
+	You are Codybot, a CLI coding agent. Keep responses concise and practical.
 
-## Project context
-- Describe the product and stack here.
-- Note any constraints or policies.
+	## Project context
+	- Describe the product and stack here.
+	- Note any constraints or policies.
 
-## Workflow
-- Prefer small, safe changes.
-- Call out risks and unknowns.
-- Summarize steps taken after each change.
-`
+	## Workflow
+	- Prefer small, safe changes.
+	- Call out risks and unknowns.
+	- Summarize steps taken after each change.
+	`
 }
 
 func fileExists(path string) bool {
